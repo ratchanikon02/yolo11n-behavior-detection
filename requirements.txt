@@ -1,7 +1,5 @@
-
-flask
-ultralytics
+gradio>=5,<7
 onnxruntime
-pillow
-opencv-python-headless
+numpy
+Pillow
 
