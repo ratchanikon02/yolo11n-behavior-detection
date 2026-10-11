@@ -1,14 +1,26 @@
 
 import os
+
+# จำกัดจำนวน CPU threads เพื่อลดภาระ Render Free
+os.environ["OMP_NUM_THREADS"] = "1"
+os.environ["MKL_NUM_THREADS"] = "1"
+os.environ["OPENBLAS_NUM_THREADS"] = "1"
+os.environ["YOLO_CONFIG_DIR"] = "/tmp/Ultralytics"
+
 from pathlib import Path
 from collections import Counter
 
+import torch
 import gradio as gr
 from PIL import Image
 from ultralytics import YOLO
 
-# ใช้ไฟล์โมเดลจริงขนาด 5.26 MB
+torch.set_num_threads(1)
+torch.set_num_interop_threads(1)
+
+# โมเดลจริงที่อัปโหลดบน GitHub
 MODEL_PATH = Path(__file__).parent / "best (43).pt"
+
 model = YOLO(str(MODEL_PATH))
 
 CLASS_NAMES = {
@@ -16,20 +28,27 @@ CLASS_NAMES = {
     1: "Sleep",
     2: "Talk with Friend",
     3: "Using Phone",
-    4: "Yawn",
+    4: "Yawn"
 }
+
 
 def detect(image, confidence):
     if image is None:
         return None, "Please upload or paste an image."
 
-    result = model.predict(
-        source=image.convert("RGB"),
-        conf=confidence,
-        imgsz=640,
-        device="cpu",
-        verbose=False
-    )[0]
+    # ลดภาพขนาดใหญ่มากก่อนประมวลผล
+    image = image.convert("RGB")
+    image.thumbnail((1024, 1024))
+
+    with torch.inference_mode():
+        result = model.predict(
+            source=image,
+            conf=confidence,
+            imgsz=416,
+            device="cpu",
+            verbose=False,
+            save=False
+        )[0]
 
     annotated = Image.fromarray(
         result.plot()[:, :, ::-1]
@@ -50,7 +69,7 @@ def detect(image, confidence):
     return annotated, summary
 
 
-# รองรับ Ctrl+V จาก Clipboard
+# JavaScript สำหรับรับภาพจาก Ctrl+V
 PASTE_JS = """
 () => {
     if (window.yoloPasteInstalled) return;
@@ -87,9 +106,9 @@ PASTE_JS = """
 }
 """
 
+
 with gr.Blocks(
-    title="YOLO11n Behavior Detection",
-    js=PASTE_JS
+    title="YOLO11n Behavior Detection"
 ) as demo:
 
     gr.Markdown(
@@ -98,6 +117,7 @@ with gr.Blocks(
     )
 
     with gr.Row():
+
         image_input = gr.Image(
             label="Input Image",
             type="pil",
@@ -132,13 +152,15 @@ with gr.Blocks(
     image_input.change(
         fn=detect,
         inputs=[image_input, confidence],
-        outputs=[image_output, text_output]
+        outputs=[image_output, text_output],
+        trigger_mode="always_last"
     )
 
     confidence.change(
         fn=detect,
         inputs=[image_input, confidence],
-        outputs=[image_output, text_output]
+        outputs=[image_output, text_output],
+        trigger_mode="always_last"
     )
 
     clear_button.click(
@@ -150,12 +172,18 @@ with gr.Blocks(
         ]
     )
 
-if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 10000))
 
-    demo.queue().launch(
+if __name__ == "__main__":
+
+    port = int(os.environ.get("PORT", "10000"))
+
+    demo.queue(
+        default_concurrency_limit=1,
+        max_size=3
+    ).launch(
         server_name="0.0.0.0",
         server_port=port,
         share=False,
-        show_error=True
+        show_error=True,
+        js=PASTE_JS
     )
